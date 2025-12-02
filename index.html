@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>GIS + 3D PLY Viewer PRO</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+    
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }
+        #map { width: 100vw; height: 100vh; }
+        
+        /* Модальное окно */
+        #modal {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(4px);
+            z-index: 99999 !important;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #box {
+            width: 80%;
+            height: 80%;
+            background: #fff;
+            border-radius: 15px;
+            box-shadow: 0 0 20px #0005;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #topbar {
+            height: 45px;
+            background: #222;
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 15px;
+            gap: 10px;
+            justify-content: space-between;
+        }
+
+        #viewer {
+            flex-grow: 1;
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        #btnClose {
+            background: #444;
+            border: none;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #btnClose:hover { background: #666; }
+    </style>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div id="modal">
+        <div id="box">
+            <div id="topbar">
+                <span id="modelTitle">3D Просмотр</span>
+                <button id="btnClose">Закрыть</button>
+            </div>
+            <div id="viewer"></div>
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+   <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
+
+        // ----- Инициализация карты (Leaflet) -----
+        const map = L.map('map').setView([43.250, 76.945], 13);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+        // UI элементы
+        const modal = document.getElementById("modal");
+        const btnClose = document.getElementById("btnClose");
+        const viewer = document.getElementById("viewer");
+        const modelTitle = document.getElementById("modelTitle");
+
+        // Функция для создания полигона (квадрат вокруг центра)
+        // size - половина стороны квадрата в градусах (~0.0004 = 40-50 метров)
+        function createPolygon(lat, lng, sizeLat = 0.0003, sizeLng = 0.00045) {
+            return [
+                [lat + sizeLat, lng - sizeLng], // Верх-лево
+                [lat + sizeLat, lng + sizeLng], // Верх-право
+                [lat - sizeLat, lng + sizeLng], // Низ-право
+                [lat - sizeLat, lng - sizeLng]  // Низ-лево
+            ];
+        }
+
+        // ----- СПИСОК ОБЪЕКТОВ (ПОЛИГОНЫ) -----
+        // Координаты центров + генерация контуров
+        const monuments = [
+            { name: "Академия наук (Ғылым ордасы)", lat: 43.246125, lng: 76.953085 },
+            { name: "Национальная библиотека РК", lat: 43.240455, lng: 76.945980 },
+            { name: "КазНПУ им. Абая (Гимназия)", lat: 43.256330, lng: 76.953880 },
+            { name: "Дворец Республики", lat: 43.243950, lng: 76.959350 },
+            { name: "КазНАИ им. Жургенова", lat: 43.252955, lng: 76.947250 },
+            { name: "Дом-музей М.О. Ауэзова", lat: 43.241525, lng: 76.932550 },
+            { name: "Служба скорой помощи", lat: 43.254535, lng: 76.956550 },
+            { name: "КБТУ (Здание парламента)", lat: 43.256055, lng: 76.942285 },
+            { name: "Гос. резиденция №4", lat: 43.244625, lng: 76.948350 },
+            { name: "Дом купца Гаврилова", lat: 43.238555, lng: 76.940525 },
+            { name: "Дом тканей «Кызыл-Тан»", lat: 43.262525, lng: 76.945235 },
+            { name: "Музей муз. инструментов", lat: 43.259255, lng: 76.956755 },
+            { name: "Бывш. Консульство США", lat: 43.238255, lng: 76.946155 },
+            { name: "Спорткомплекс «Медеу»", lat: 43.157395, lng: 77.058855, sizeLat: 0.0015, sizeLng: 0.0020 }, // Большой объект
+            { name: "Музей искусств им. Кастеева", lat: 43.235555, lng: 76.918555 },
+            { name: "Библиотека им. Бегалина", lat: 43.255555, lng: 76.955055 },
+            { name: "Вознесенский собор", lat: 43.258775, lng: 76.953149 },
+            { name: "ГАТОБ им. Абая", lat: 43.248555, lng: 76.947585 },
+            { name: "«Казреставрация»", lat: 43.254855, lng: 76.951555 },
+            { name: "Бюст Д.А. Кунаева", lat: 43.251555, lng: 76.946555, sizeLat: 0.00005, sizeLng: 0.00008 }, // Маленький
+            { name: "Бюст С.Д. Луганского", lat: 43.261255, lng: 76.941555, sizeLat: 0.00005, sizeLng: 0.00008 },
+            { name: "Мемориал Славы", lat: 43.259585, lng: 76.955555, sizeLat: 0.0005, sizeLng: 0.0008 },
+            { name: "Памятник Абаю", lat: 43.243056, lng: 76.957500, sizeLat: 0.0001, sizeLng: 0.00015 },
+            { name: "Памятник М. Ауэзову", lat: 43.248255, lng: 76.947255, sizeLat: 0.0001, sizeLng: 0.00015 },
+            { name: "Памятник Ш. Уалиханову", lat: 43.244555, lng: 76.953255, sizeLat: 0.0001, sizeLng: 0.00015 },
+            { name: "Памятник А. Джангильдину", lat: 43.340285, lng: 76.948615, sizeLat: 0.0001, sizeLng: 0.00015 },
+            { name: "Памятник А. Иманову", lat: 43.265985, lng: 76.939435, sizeLat: 0.0001, sizeLng: 0.00015 },
+            { name: "Музей Алматы", lat: 43.248855, lng: 76.944555 },
+            { name: "Дом-музей А. Байтурсынулы", lat: 43.253555, lng: 76.931555 },
+            { name: "Центральный гос. музей РК", lat: 43.235833, lng: 76.950833 },
+            { name: "Центральный гос. архив", lat: 43.244555, lng: 76.943555 },
+            { name: "Киностудия «Казахфильм»", lat: 43.203585, lng: 76.892555, sizeLat: 0.002, sizeLng: 0.003 } // Огромная территория
+        ];
+
+        // Добавляем ПОЛИГОНЫ на карту
+        monuments.forEach(obj => {
+            // Если указаны спец. размеры (для больших объектов или памятников), берем их
+            const latSize = obj.sizeLat || 0.00035; // ~35 метров от центра
+            const lngSize = obj.sizeLng || 0.00055; // ~45 метров от центра
+
+            const coords = createPolygon(obj.lat, obj.lng, latSize, lngSize);
+
+            const polygon = L.polygon(coords, { 
+                color: '#3388ff', 
+                fillColor: '#3388ff', 
+                fillOpacity: 0.4,
+                weight: 2
+            }).addTo(map);
+            
+            // Тултип (всплывашка)
+            polygon.bindTooltip(obj.name, { sticky: true });
+
+            // Клик - открывает 3D
+            polygon.on('click', () => {
+                modelTitle.innerText = obj.name;
+                openModal();
+                // Используем одну модель-заглушку, так как у вас пока нет реальных файлов
+                // Если есть, замените на `models/${obj.name}.ply`
+                loadPLY("models/object1.ply"); 
+            });
+        });
+
+        // ----- Three.js 3D Viewer -----
+        let renderer, scene, camera, controls;
+        let currentMesh = null;
+        let requestID;
+
+        btnClose.onclick = () => { closeModal(); };
+
+        function openModal() {
+            modal.style.display = "flex";
+            if (!renderer) initThree();
+            animate();
+        }
+
+        function closeModal() {
+            modal.style.display = "none";
+            if (requestID) cancelAnimationFrame(requestID);
+            
+            if (currentMesh) {
+                scene.remove(currentMesh);
+                if(currentMesh.geometry) currentMesh.geometry.dispose();
+                if(currentMesh.material) currentMesh.material.dispose();
+                currentMesh = null;
+            }
+        }
+
+        function initThree() {
+            if (renderer) return;
+
+            const width = viewer.clientWidth;
+            const height = viewer.clientHeight;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(width, height);
+            renderer.setClearColor(0xf0f0f0, 1);
+            viewer.appendChild(renderer.domElement);
+
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(60, width / height, 0.01, 1000);
+            camera.position.set(2, 2, 2);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+            const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+            directional.position.set(1, 2, 3);
+            scene.add(directional);
+
+            window.addEventListener('resize', onWindowResize);
+        }
+
+        function loadPLY(path) {
+            if (!renderer) initThree();
+            console.log("Загрузка модели:", path);
+
+            const loader = new PLYLoader();
+            loader.load(path, (geometry) => {
+                geometry.computeVertexNormals();
+                const material = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.1, roughness: 0.8 });
+                const mesh = new THREE.Mesh(geometry, material);
+
+                geometry.computeBoundingBox();
+                const bbox = geometry.boundingBox;
+                const size = new THREE.Vector3();
+                bbox.getSize(size);
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const scale = 1.5 / maxDim;
+                mesh.scale.setScalar(scale);
+
+                geometry.computeBoundingBox(); 
+                const center = new THREE.Vector3();
+                bbox.getCenter(center);
+                mesh.position.sub(center.multiplyScalar(scale));
+                
+                mesh.rotation.x = -Math.PI / 2;
+
+                if (currentMesh) {
+                    scene.remove(currentMesh);
+                    if(currentMesh.geometry) currentMesh.geometry.dispose();
+                    if(currentMesh.material) currentMesh.material.dispose();
+                }
+
+                currentMesh = mesh;
+                scene.add(mesh);
+            }, undefined, (err) => {
+                console.error('Ошибка загрузки PLY:', err);
+                alert("Не удалось загрузить модель: " + path);
+            });
+
+            setTimeout(onWindowResize, 100);
+        }
+
+        function animate() {
+            if (modal.style.display === "none") return;
+            requestID = requestAnimationFrame(animate);
+            if (controls) controls.update();
+            if (renderer && scene && camera) renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            if (!renderer || !viewer) return;
+            const w = viewer.clientWidth;
+            const h = viewer.clientHeight;
+            renderer.setSize(w, h);
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+        }
+    </script>
+</body>
+</html>
