@@ -147,7 +147,7 @@
 
         .video-card {
             position: sticky;
-            top: 8px;
+            top: 3px;
             align-self: start;
             max-height: calc(88vh - 140px);
             display: flex;
@@ -343,6 +343,49 @@
                 max-height: none;
             }
         }
+
+        .map-stats-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+
+            display: flex;
+            gap: 14px;
+
+            z-index: 1000;
+        }
+
+        .map-stat-pill {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+
+            padding: 14px 22px;
+            /* было меньше */
+
+            background: rgba(255, 255, 255, 0.92);
+            backdrop-filter: blur(8px);
+
+            border-radius: 30px;
+
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+
+            font-size: 16px;
+            /* текст больше */
+        }
+
+        .map-stat-pill strong {
+            font-size: 18px;
+        }
+
+        .map-stat-pill span {
+            color: #555;
+        }
+
+        .map-stat-pill img {
+            width: 16px;
+            height: 26px;
+        }
     </style>
 </head>
 
@@ -385,7 +428,26 @@
         </div>
     </div>
 
-    <div id="map"></div>
+
+    <div id="map">
+        <div class="map-stats-overlay">
+
+            <div class="map-stat-pill blue">
+                <img src="https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png">
+                <strong>34</strong>
+                <span>Республиканского значения</span>
+            </div>
+
+            <div class="map-stat-pill green">
+                <img
+                    src="https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png">
+                <strong>140</strong>
+                <span>Местного значения</span>
+            </div>
+
+        </div>
+    </div>
+
 
     <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script src="leaflet-geometry-override.js"></script>
@@ -411,17 +473,24 @@
         const modalCoordsAccordion = document.querySelector(".modal-coords-accordion");
 
         function renderCoordsList(coords) {
-            if (!modalCoordsList || !Array.isArray(coords)) return;
+            if (!modalCoordsList) return;
+
+            if (!Array.isArray(coords) || coords.length === 0) {
+                modalCoordsList.innerHTML = `
+                    <div class="modal-coords-item">Координаты для этого объекта не найдены.</div>
+                `;
+                return;
+            }
 
             modalCoordsList.innerHTML = coords.map((point, index) => {
-                const lat = point[0];
-                const lng = point[1];
+                const lat = Number(point[0]);
+                const lng = Number(point[1]);
 
                 return `
                     <div class="modal-coords-item">
                         <strong>${index + 1}.</strong>
-                        X: ${lng.toFixed(12)}<br>
-                        Y: ${lat.toFixed(12)}
+                        Долгота: ${lng.toFixed(12)}<br>
+                        Широта: ${lat.toFixed(12)}
                     </div>
                 `;
             }).join('');
@@ -435,6 +504,13 @@
 
         function invertCoords(coords) {
             return coords.map(([lng, lat]) => [lat, lng]);
+        }
+
+        function formatDescription(description = '') {
+            return description
+                .replace(/(^|<br>\s*)<b>\d+\.\s*/g, '$1<b>')
+                .replace(/\\n/g, '<br>')
+                .trim();
         }
 
         // ----- Данные (ваши 34 объекта) -----
@@ -1181,7 +1257,12 @@
 
             const openInfo = () => {
                 modelTitle.innerText = obj.name;
-                descriptionText.innerHTML = obj.description.replace(/\\n/g, '<br>');
+                descriptionText.innerHTML = formatDescription(obj.description || '');
+                renderCoordsList(obj.polygon || []);
+                modalCoordsAccordion?.classList.remove("open");
+                if (modalCoordsList) {
+                    modalCoordsList.scrollTop = 0;
+                }
                 objectVideo.src = obj.videoPath || '';
                 modal.classList.add("active");
                 document.getElementById("scroll-content").scrollTop = 0;
